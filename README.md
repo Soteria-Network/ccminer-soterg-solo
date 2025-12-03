@@ -3,6 +3,7 @@
 
 This variant of **ccminer** was tested and built on **Linux (Debian Bookworm)**.  
 The recommended **CUDA Toolkit version** is **11.8**.
+Other new versions have been released that should work with CUDA above 11.8.
 
 ---
 
