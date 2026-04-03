@@ -181,6 +181,9 @@
     <ClCompile Include="util.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="gbt_solo.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="ccminer.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -406,6 +409,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="miner.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="gbt_solo.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="argon2d\argon2d_kernel.h">
@@ -1098,6 +1104,12 @@
       <Filter>Source Files\CUDA\x16</Filter>
     </CudaCompile>
     <CudaCompile Include="x16\x16r.cu">
+      <Filter>Source Files\CUDA\x16</Filter>
+    </CudaCompile>
+    <CudaCompile Include="x16\x12rt.cu">
+      <Filter>Source Files\CUDA\x16</Filter>
+    </CudaCompile>
+    <CudaCompile Include="x16\x16rt.cu">
       <Filter>Source Files\CUDA\x16</Filter>
     </CudaCompile>
     <CudaCompile Include="x16\x16rv2.cu">

@@ -46,6 +46,7 @@
 #endif
 
 #include "miner.h"
+#include "gbt_solo.h"
 #include "algos.h"
 #include "sia/sia-rpc.h"
 #include "crypto/xmr-rpc.h"
@@ -119,6 +120,9 @@ int opt_shares_limit = -1;
 time_t firstwork_time = 0;
 int opt_timeout = 300; // curl
 int opt_scantime = 10;
+/* Solo GBT: full getblocktemplate at least this often (seconds) so we see new blocks; between refetches we only ntime++. */
+#define GBT_SOLO_REFETCH_INTERVAL 45
+static volatile time_t g_gbt_solo_last_template = 0;
 static json_t *opt_config;
 static const bool opt_time = true;
 volatile enum sha_algos opt_algo = ALGO_AUTO;
@@ -182,6 +186,8 @@ char *rpc_user = NULL;
 char *rpc_pass;
 char *rpc_url;
 char *short_url = NULL;
+/* Solo mining payout address (--coinbase-addr); stored for RPC/GBT use where supported */
+char *opt_coinbase_addr = NULL;
 
 struct stratum_ctx stratum = { 0 };
 pthread_mutex_t stratum_sock_lock;
@@ -1130,6 +1136,54 @@ static bool submit_upstream_work(CURL *curl, struct work *work)
 
         } else {
 
+		/* GBT solo: full block hex via submitblock (Soteria / soterg) */
+		if (work->gbt_txs_hex && work->gbt_txs_hex[0]) {
+			/* work->data words are in stratum convention (swab32 of native);
+			   be32enc converts them back to wire-format LE bytes. */
+			for (int i = 0; i < 20; i++)
+				be32enc(work->data + i, work->data[i]);
+                        char *hdr = bin2hex((uchar *)work->data, 80);
+                        if (unlikely(!hdr)) {
+                                applog(LOG_ERR, "submit_upstream_work OOM (header hex)");
+                                return false;
+                        }
+                        size_t l = strlen(hdr) + strlen(work->gbt_txs_hex) + 128;
+                        char *reqb = (char *)malloc(l);
+                        if (unlikely(!reqb)) {
+                                free(hdr);
+                                applog(LOG_ERR, "submit_upstream_work OOM (submitblock)");
+                                return false;
+                        }
+                        snprintf(reqb, l, "{\"method\":\"submitblock\",\"params\":[\"%s%s\"],\"id\":9}\r\n",
+                                hdr, work->gbt_txs_hex);
+                        free(hdr);
+                        val = json_rpc_call_pool(curl, pool, reqb, false, false, NULL, true, true);
+                        free(reqb);
+                        if (unlikely(!val)) {
+                                applog(LOG_ERR, "submit_upstream_work submitblock RPC failed");
+                                return false;
+                        }
+                        res = json_object_get(val, "result");
+                        reason = json_object_get(val, "reject-reason");
+                        bool acc = true;
+                        if (res && json_is_string(res)) {
+                                const char *rs = json_string_value(res);
+                                if (rs && rs[0]) {
+                                        acc = false;
+                                        applog(LOG_ERR, "submitblock: %s", rs);
+                                }
+                        } else if (json_is_null(res) || !res) {
+                                applog(LOG_NOTICE, "submitblock: daemon accepted (verify wallet / block list)");
+                        }
+                        if (!share_result(acc, work->pooln, work->sharediff[0],
+                                        reason ? json_string_value(reason) : NULL)) {
+                                if (check_dups)
+                                        hashlog_purge_job(work->job_id);
+                        }
+                        json_decref(val);
+                        return true;
+                }
+
                 int data_size = 128;
                 int adata_sz = data_size / sizeof(uint32_t);
 
@@ -1175,7 +1229,7 @@ static bool submit_upstream_work(CURL *curl, struct work *work)
                         submission_data);
 
                 /* issue JSON-RPC request */
-                val = json_rpc_call_pool(curl, pool, s, false, false, NULL);
+                val = json_rpc_call_pool(curl, pool, s, false, false, NULL, false, false);
                 if (unlikely(!val)) {
                         applog(LOG_ERR, "submit_upstream_work json_rpc_call failed");
                         return false;
@@ -1287,7 +1341,7 @@ static bool get_blocktemplate(CURL *curl, struct work *work)
         int curl_err = 0;
         // MWEB: Use dynamic request for RinHash
         const char *request = (opt_algo == ALGO_RINHASH) ? build_gbt_req() : gbt_req;
-        json_t *val = json_rpc_call_pool(curl, pool, request, false, false, &curl_err);
+        json_t *val = json_rpc_call_pool(curl, pool, request, false, false, &curl_err, false, false);
 
         if (!val && curl_err == -1) {
                 // when getblocktemplate is not supported, disable it
@@ -1317,7 +1371,7 @@ static bool get_mininginfo(CURL *curl, struct work *work)
         if (have_stratum || have_longpoll || !allow_mininginfo)
                 return false;
 
-        json_t *val = json_rpc_call_pool(curl, pool, info_req, false, false, &curl_err);
+        json_t *val = json_rpc_call_pool(curl, pool, info_req, false, false, &curl_err, false, false);
 
         if (!val && curl_err == -1) {
                 allow_mininginfo = false;
@@ -1336,8 +1390,15 @@ static bool get_mininginfo(CURL *curl, struct work *work)
                         if (key) {
                                 if (json_is_object(key))
                                         key = json_object_get(key, "proof-of-work");
-                                if (json_is_real(key))
+                                if (json_is_integer(key))
+                                        net_diff = (double)json_integer_value(key);
+                                else if (json_is_real(key))
                                         net_diff = json_real_value(key);
+                                else if (json_is_string(key)) {
+                                        const char *ds = json_string_value(key);
+                                        if (ds && *ds)
+                                                net_diff = strtod(ds, NULL);
+                                }
                         }
                         key = json_object_get(res, "networkhashps");
                         if (key && json_is_integer(key)) {
@@ -1383,12 +1444,57 @@ static bool get_upstream_work(CURL *curl, struct work *work)
                 return rc;
         }
 
+        /* Soteria (soterg / ALGO_X12R): solo via getblocktemplate + submitblock */
+        if (solo_mining_use_gbt() && allow_gbt) {
+                char gbtbuf[512];
+                if (!opt_quiet)
+                        applog(LOG_NOTICE, "Solo GBT: requesting block template from %s ...", pool->url);
+                build_gbt_solo_request(gbtbuf, sizeof(gbtbuf));
+                val = json_rpc_call_pool(curl, pool, gbtbuf, false, false, NULL, false, true);
+                gettimeofday(&tv_end, NULL);
+                if (have_stratum || unlikely(work->pooln != cur_pooln)) {
+                        if (val)
+                                json_decref(val);
+                        return true;
+                }
+                if (val) {
+                        json_t *gbres = json_object_get(val, "result");
+                        if (gbres && gbt_solo_decode(gbres, work)) {
+                                g_gbt_solo_last_template = time(NULL);
+                                if (opt_protocol) {
+                                        timeval_subtract(&diff, &tv_end, &tv_start);
+                                        applog(LOG_INFO, "GBT solo new work received in %.2f ms",
+                                                (1000.0 * diff.tv_sec) + (0.001 * diff.tv_usec));
+                                }
+                                json_decref(val);
+                                get_mininginfo(curl, work);
+                                if (!opt_quiet) {
+                                        if (net_diff > 0.)
+                                                applog(LOG_BLUE,
+                                                        "GBT solo: height %u  job targetdiff %.8f  chain diff %.8f (expect long gaps solo at ~tens MH/s)",
+                                                        work->height, work->targetdiff, net_diff);
+                                        else
+                                                applog(LOG_BLUE,
+                                                        "GBT solo: height %u  job targetdiff %.8f  (getmininginfo chain diff unavailable)",
+                                                        work->height, work->targetdiff);
+                                }
+                                return true;
+                        }
+                        json_decref(val);
+                        if (!opt_quiet)
+                                applog(LOG_ERR, "Solo GBT: getblocktemplate reply could not be decoded (see errors above). Check --coinbase-addr and RPC.");
+                } else if (!opt_quiet) {
+                        applog(LOG_ERR, "Solo GBT: getblocktemplate failed. If the node is on your LAN, unset HTTP_PROXY/ALL_PROXY or use a build that disables env proxy for JSON-RPC.");
+                }
+                /* fall through to getwork */
+        }
+
         if (opt_debug_threads)
                 applog(LOG_DEBUG, "%s: want_longpoll=%d have_longpoll=%d",
                         __func__, want_longpoll, have_longpoll);
 
         /* want_longpoll/have_longpoll required here to init/unlock the lp thread */
-        val = json_rpc_call_pool(curl, pool, rpc_req, want_longpoll, have_longpoll, NULL);
+        val = json_rpc_call_pool(curl, pool, rpc_req, want_longpoll, have_longpoll, NULL, false, false);
         gettimeofday(&tv_end, NULL);
 
         if (have_stratum || unlikely(work->pooln != cur_pooln)) {
@@ -1400,7 +1506,13 @@ static bool get_upstream_work(CURL *curl, struct work *work)
         if (!val)
                 return false;
 
-        rc = gbt_work_decode(json_object_get(val, "result"), work);
+        json_t *result = json_object_get(val, "result");
+        if (!work_decode(result, work)) {
+                json_decref(val);
+                return false;
+        }
+
+        rc = gbt_work_decode(result, work);
 
         if (opt_protocol && rc) {
                 timeval_subtract(&diff, &tv_end, &tv_start);
@@ -1424,6 +1536,7 @@ static void workio_cmd_free(struct workio_cmd *wc)
 
         switch (wc->cmd) {
         case WC_SUBMIT_WORK:
+                work_gbt_free(wc->u.work);
                 aligned_free(wc->u.work);
                 break;
         default: /* do nothing */
@@ -1639,6 +1752,10 @@ static bool submit_work(struct thr_info *thr, const struct work *work_in)
         wc->cmd = WC_SUBMIT_WORK;
         wc->thr = thr;
         memcpy(wc->u.work, work_in, sizeof(struct work));
+        wc->u.work->gbt_txs_hex = (work_in->gbt_txs_hex && work_in->gbt_txs_hex[0])
+                ? strdup(work_in->gbt_txs_hex) : NULL;
+        wc->u.work->gbt_workid = (work_in->gbt_workid && work_in->gbt_workid[0])
+                ? strdup(work_in->gbt_workid) : NULL;
         wc->pooln = work_in->pooln;
 
         /* send solution to workio thread */
@@ -2134,20 +2251,41 @@ static void *miner_thread(void *userdata)
                         pthread_mutex_lock(&g_work_lock);
                         secs = (uint32_t) (time(NULL) - g_work_time);
                         if (secs >= scan_time || nonceptr[0] >= (end_nonce - 0x100)) {
-                                if (opt_debug && g_work_time && !opt_quiet)
-                                        applog(LOG_DEBUG, "work time %u/%us nonce %x/%x", secs, scan_time, nonceptr[0], end_nonce);
-                                /* obtain new work from internal workio thread */
-                                if (unlikely(!get_work(mythr, &g_work))) {
-                                        pthread_mutex_unlock(&g_work_lock);
-                                        if (switchn != pool_switch_count) {
-                                                switchn = pool_switch_count;
-                                                continue;
-                                        } else {
-                                                applog(LOG_ERR, "work retrieval failed, exiting mining thread %d", mythr->id);
-                                                goto out;
+                                bool rolled_ntime = false;
+                                time_t nowt = time(NULL);
+                                bool gbt_need_refetch = solo_mining_use_gbt() && g_gbt_solo_last_template &&
+                                        (nowt - (time_t)g_gbt_solo_last_template) >= (time_t)GBT_SOLO_REFETCH_INTERVAL;
+				if (solo_mining_use_gbt() && g_work.gbt_txs_hex && g_work.gbt_txs_hex[0] &&
+					!gbt_need_refetch &&
+					g_work.gbt_ntime_cap > 0) {
+					uint32_t cur_ntime = swab32(g_work.data[17]);
+					if (cur_ntime < g_work.gbt_ntime_cap) {
+						cur_ntime++;
+						g_work.data[17] = swab32(cur_ntime);
+						rolled_ntime = true;
+						g_work_time = time(NULL);
+						if (opt_debug && !opt_quiet)
+							applog(LOG_DEBUG, "GBT solo: ntime++ %08x (cap %08x, full template refetch in <= %ds)",
+								cur_ntime, g_work.gbt_ntime_cap,
+								(int)(GBT_SOLO_REFETCH_INTERVAL - (nowt - (time_t)g_gbt_solo_last_template)));
+					}
+				}
+                                if (!rolled_ntime) {
+                                        if (opt_debug && g_work_time && !opt_quiet)
+                                                applog(LOG_DEBUG, "work time %u/%us nonce %x/%x", secs, scan_time, nonceptr[0], end_nonce);
+                                        /* obtain new work from internal workio thread */
+                                        if (unlikely(!get_work(mythr, &g_work))) {
+                                                pthread_mutex_unlock(&g_work_lock);
+                                                if (switchn != pool_switch_count) {
+                                                        switchn = pool_switch_count;
+                                                        continue;
+                                                } else {
+                                                        applog(LOG_ERR, "work retrieval failed, exiting mining thread %d", mythr->id);
+                                                        goto out;
+                                                }
                                         }
+                                        g_work_time = time(NULL);
                                 }
-                                g_work_time = time(NULL);
                         }
                 }
 
@@ -3850,6 +3988,10 @@ void parse_arg(int key, char *arg)
                 break;
         case 1015:
                 opt_submit_stale = true;
+                break;
+        case 1016: /* --coinbase-addr */
+                free(opt_coinbase_addr);
+                opt_coinbase_addr = strdup(arg);
                 break;
         case 'S':
         case 1018:

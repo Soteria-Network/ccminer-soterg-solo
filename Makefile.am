@@ -19,7 +19,7 @@ ccminer_SOURCES	= elist.h miner.h compat.h \
 			  compat/inttypes.h compat/stdbool.h compat/unistd.h \
 			  compat/sys/time.h compat/getopt/getopt.h \
 			  crc32.c hefty1.c \
-			  ccminer.cpp pools.cpp util.cpp bench.cpp bignum.cpp \
+			  ccminer.cpp pools.cpp util.cpp gbt_solo.cpp bench.cpp bignum.cpp \
 			  api.cpp hashlog.cpp nvml.cpp stats.cpp sysinfos.cpp cuda.cpp \
 			  nvsettings.cpp \
 			  argon2d/argon2ref/blake2/blake2b.c \
@@ -152,7 +152,7 @@ nvcc_ARCH += -gencode=arch=compute_75,code=\"sm_75,compute_75\" # CUDA 10
 #nvcc_ARCH += -gencode=arch=compute_50,code=\"sm_50,compute_50\"
 
 nvcc_FLAGS = $(nvcc_ARCH) @CUDA_INCLUDES@ -I. @CUDA_CFLAGS@
-nvcc_FLAGS += $(JANSSON_INCLUDES) --ptxas-options="-v" --std=c++14
+nvcc_FLAGS += $(JANSSON_INCLUDES) --ptxas-options="-v" --std=c++17
 
 # we're now targeting all major compute architectures within one binary.
 .cu.o:

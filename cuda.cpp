@@ -101,11 +101,14 @@ void cuda_print_devices()
 		int dev_id = device_map[n % MAX_GPUS];
 		cudaDeviceProp props;
 		cudaGetDeviceProperties(&props, dev_id);
+		int clock_khz = 0, memclock_khz = 0;
+		cudaDeviceGetAttribute(&clock_khz, cudaDevAttrClockRate, dev_id);
+		cudaDeviceGetAttribute(&memclock_khz, cudaDevAttrMemoryClockRate, dev_id);
 		if (!opt_n_threads || n < opt_n_threads) {
 			fprintf(stderr, "GPU #%d: SM %d.%d %s @ %.0f MHz (MEM %.0f)\n", dev_id,
 				props.major, props.minor, device_name[dev_id],
-				(double) props.clockRate/1000,
-				(double) props.memoryClockRate/1000);
+				(double) clock_khz / 1000,
+				(double) memclock_khz / 1000);
 #ifdef USE_WRAPNVML
 			if (opt_debug) nvml_print_device_info(dev_id);
 #ifdef WIN32
@@ -255,8 +258,11 @@ int cuda_gpu_info(struct cgpu_info *gpu)
 {
 	cudaDeviceProp props;
 	if (cudaGetDeviceProperties(&props, gpu->gpu_id) == cudaSuccess) {
-		gpu->gpu_clock = (uint32_t) props.clockRate;
-		gpu->gpu_memclock = (uint32_t) props.memoryClockRate;
+		int clock_khz = 0, memclock_khz = 0;
+		cudaDeviceGetAttribute(&clock_khz, cudaDevAttrClockRate, gpu->gpu_id);
+		cudaDeviceGetAttribute(&memclock_khz, cudaDevAttrMemoryClockRate, gpu->gpu_id);
+		gpu->gpu_clock = (uint32_t) clock_khz;
+		gpu->gpu_memclock = (uint32_t) memclock_khz;
 		gpu->gpu_mem = (uint64_t) (props.totalGlobalMem / 1024); // kB
 #if defined(_WIN32) && defined(USE_WRAPNVML)
 		// required to get mem size > 4GB (size_t too small for bytes on 32bit)

@@ -50,12 +50,6 @@ struct data_buffer {
         size_t          len;
 };
 
-struct upload_buffer {
-        const void      *buf;
-        size_t          len;
-        size_t          pos;
-};
-
 struct header_info {
         char            *lp_path;
         char            *reason;
@@ -273,46 +267,6 @@ static size_t all_data_cb(const void *ptr, size_t size, size_t nmemb,
         return len;
 }
 
-static size_t upload_data_cb(void *ptr, size_t size, size_t nmemb,
-                             void *user_data)
-{
-        struct upload_buffer *ub = (struct upload_buffer *)user_data;
-        unsigned int len = (unsigned int)(size * nmemb);
-
-        if (len > ub->len - ub->pos)
-                len = (unsigned int)(ub->len - ub->pos);
-
-        if (len) {
-                memcpy(ptr, (char*)ub->buf + ub->pos, len);
-                ub->pos += len;
-        }
-
-        return len;
-}
-
-#if LIBCURL_VERSION_NUM >= 0x071200
-static int seek_data_cb(void *user_data, curl_off_t offset, int origin)
-{
-        struct upload_buffer *ub = (struct upload_buffer *)user_data;
-        
-        switch (origin) {
-        case SEEK_SET:
-                ub->pos = (size_t)offset;
-                break;
-        case SEEK_CUR:
-                ub->pos += (size_t)offset;
-                break;
-        case SEEK_END:
-                ub->pos = ub->len + (size_t)offset;
-                break;
-        default:
-                return 1; /* CURL_SEEKFUNC_FAIL */
-        }
-
-        return 0; /* CURL_SEEKFUNC_OK */
-}
-#endif
-
 static size_t resp_hdr_cb(void *ptr, size_t size, size_t nmemb, void *user_data)
 {
         struct header_info *hi = (struct header_info *)user_data;
@@ -420,23 +374,43 @@ static int sockopt_keepalive_cb(void *userdata, curl_socket_t fd,
 }
 #endif
 
+#if LIBCURL_VERSION_NUM >= 0x072000
+/* Abort in-flight JSON-RPC when user exits (proper_exit sets abort_flag). */
+static int json_rpc_xfer_abort(void *clientp, curl_off_t dltotal, curl_off_t dlnow,
+                curl_off_t ultotal, curl_off_t ulnow)
+{
+        (void)clientp;
+        (void)dltotal;
+        (void)dlnow;
+        (void)ultotal;
+        (void)ulnow;
+        return abort_flag ? 1 : 0;
+}
+#endif
+
 /* For getwork (longpoll or wallet) - not stratum pools!
  * DO NOT USE DIRECTLY
  */
 static json_t *json_rpc_call(CURL *curl, const char *url,
                       const char *userpass, const char *rpc_req,
-                      bool longpoll_scan, bool longpoll, bool keepalive, int *curl_err)
+                      bool longpoll_scan, bool longpoll, bool keepalive,
+                      bool allow_null_result, int *curl_err,
+                      bool wallet_minimal_headers)
 {
         json_t *val, *err_val, *res_val;
         int rc;
         struct data_buffer all_data = { 0 };
-        struct upload_buffer upload_data;
         json_error_t err;
         struct curl_slist *headers = NULL;
         char *httpdata;
-        char len_hdr[64], hashrate_hdr[64];
+        char hashrate_hdr[64];
         char curl_err_str[CURL_ERROR_SIZE] = { 0 };
         long timeout = longpoll ? opt_timeout : opt_timeout/2;
+        /* opt_timeout/2 can be 0 when -T 1; libcurl treats 0 as infinite. */
+        if (timeout < 1L)
+                timeout = 1L;
+        if (!longpoll && timeout < 5L)
+                timeout = 5L;
         struct header_info hi = { 0 };
         bool lp_scanning = longpoll_scan && !have_longpoll;
 
@@ -456,20 +430,37 @@ static json_t *json_rpc_call(CURL *curl, const char *url,
         curl_easy_setopt(curl, CURLOPT_TCP_NODELAY, 1);
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, all_data_cb);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &all_data);
-#if LIBCURL_VERSION_NUM >= 0x071200
-        curl_easy_setopt(curl, CURLOPT_SEEKFUNCTION, &seek_data_cb);
-        curl_easy_setopt(curl, CURLOPT_SEEKDATA, &upload_data);
-#endif
         curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curl_err_str);
         curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1);
         curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout);
+        /* Avoid hanging on unreachable RPC (connect phase can otherwise use most of the budget). */
+        {
+                long conn_to = timeout / 3;
+                if (conn_to < 10L)
+                        conn_to = 10L;
+                if (conn_to > 45L)
+                        conn_to = 45L;
+                if (timeout > 1L && conn_to >= timeout)
+                        conn_to = timeout - 1L;
+                if (conn_to < 1L)
+                        conn_to = 1L;
+                curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, conn_to);
+        }
+#if LIBCURL_VERSION_NUM >= 0x072000
+        curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+        curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, json_rpc_xfer_abort);
+        curl_easy_setopt(curl, CURLOPT_XFERINFODATA, NULL);
+#endif
         curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, resp_hdr_cb);
         curl_easy_setopt(curl, CURLOPT_HEADERDATA, &hi);
-        if (opt_proxy)
-   {
+        /* Wallet JSON-RPC must reach the node directly. If HTTP_PROXY/ALL_PROXY is set in
+         * the environment, libcurl would route LAN URLs through it and often hang. Only use
+         * a proxy when the user passed --proxy. */
+        if (opt_proxy) {
                 curl_easy_setopt(curl, CURLOPT_PROXY, opt_proxy);
                 curl_easy_setopt(curl, CURLOPT_PROXYTYPE, opt_proxy_type);
-        }
+        } else
+                curl_easy_setopt(curl, CURLOPT_PROXY, "");
         if (userpass)
    {
                 curl_easy_setopt(curl, CURLOPT_USERPWD, userpass);
@@ -479,22 +470,27 @@ static json_t *json_rpc_call(CURL *curl, const char *url,
         if (keepalive)
                 curl_easy_setopt(curl, CURLOPT_SOCKOPTFUNCTION, sockopt_keepalive_cb);
 #endif
-        curl_easy_setopt(curl, CURLOPT_POST, 1);
-
         if (opt_protocol)
                 applog(LOG_DEBUG, "JSON protocol request:\n%s", rpc_req);
 
-        upload_data.buf = rpc_req;
-        upload_data.len = strlen(rpc_req);
-        upload_data.pos = 0;
-        sprintf(len_hdr, "Content-Length: %lu", (unsigned long) upload_data.len);
-        sprintf(hashrate_hdr, "X-Mining-Hashrate: %llu", (unsigned long long) global_hashrate);
+        /* Must send the JSON body. Older code set Content-Length but never wired
+         * CURLOPT_READFUNCTION / POSTFIELDS — the server waits for those bytes forever. */
+        curl_easy_setopt(curl, CURLOPT_COPYPOSTFIELDS, rpc_req);
+
+        if (!wallet_minimal_headers)
+                sprintf(hashrate_hdr, "X-Mining-Hashrate: %llu",
+                        (unsigned long long) global_hashrate);
 
         headers = curl_slist_append(headers, "Content-Type: application/json");
-        headers = curl_slist_append(headers, len_hdr);
         headers = curl_slist_append(headers, "User-Agent: " USER_AGENT);
-        headers = curl_slist_append(headers, "X-Mining-Extensions: longpoll noncerange reject-reason");
-        headers = curl_slist_append(headers, hashrate_hdr);
+        /* Some coin daemons treat X-Mining-Extensions: longpoll like HTTP long-poll and never
+         * return until a new block — same as bare curl without these headers. Solo GBT/submitblock
+         * use wallet_minimal_headers. */
+        if (!wallet_minimal_headers) {
+                headers = curl_slist_append(headers,
+                        "X-Mining-Extensions: longpoll noncerange reject-reason");
+                headers = curl_slist_append(headers, hashrate_hdr);
+        }
         headers = curl_slist_append(headers, "Accept:"); /* disable Accept hdr*/
         headers = curl_slist_append(headers, "Expect:"); /* disable Expect hdr*/
 
@@ -504,6 +500,8 @@ static json_t *json_rpc_call(CURL *curl, const char *url,
         if (curl_err != NULL)
                 *curl_err = rc;
         if (rc) {
+                if (abort_flag && rc == CURLE_ABORTED_BY_CALLBACK)
+                        goto err_out;
                 if (!(longpoll && rc == CURLE_OPERATION_TIMEDOUT)) {
                         applog(LOG_ERR, "HTTP request failed: %s", curl_err_str);
                         goto err_out;
@@ -556,11 +554,16 @@ static json_t *json_rpc_call(CURL *curl, const char *url,
                 free(s);
         }
 
-        /* JSON-RPC valid response returns a non-null 'result',
-         * and a null 'error'. */
+        /* JSON-RPC: normally non-null result; submitblock uses JSON-null result on success. */
         res_val = json_object_get(val, "result");
         err_val = json_object_get(val, "error");
 
+        if (allow_null_result && res_val && json_is_null(res_val) &&
+            (!err_val || json_is_null(err_val)))
+                goto success_rpc;
+
+        /* JSON-RPC valid response returns a non-null 'result',
+         * and a null 'error'. */
         if (!res_val || json_is_null(res_val) ||
             (err_val && !json_is_null(err_val))) {
                 char *s = NULL;
@@ -594,6 +597,7 @@ static json_t *json_rpc_call(CURL *curl, const char *url,
                 goto err_out;
         }
 
+success_rpc:
         if (hi.reason)
                 json_object_set_new(val, "reject-reason", json_string(hi.reason));
 
@@ -614,7 +618,8 @@ err_out:
 
 /* getwork calls with pool pointer (wallet/longpoll pools) */
 json_t *json_rpc_call_pool(CURL *curl, struct pool_infos *pool, const char *req,
-        bool longpoll_scan, bool longpoll, int *curl_err)
+        bool longpoll_scan, bool longpoll, int *curl_err, bool allow_null_result,
+        bool wallet_minimal_headers)
 {
         char userpass[512];
         // Sửa để tránh tràn bộ nhớ:
@@ -633,7 +638,8 @@ json_t *json_rpc_call_pool(CURL *curl, struct pool_infos *pool, const char *req,
 
         userpass[sizeof(userpass)-1] = '\0'; // đảm bảo kết thúc chuỗi
 
-        return json_rpc_call(curl, pool->url, userpass, req, longpoll_scan, false, false, curl_err);
+        return json_rpc_call(curl, pool->url, userpass, req, longpoll_scan, false, false,
+                allow_null_result, curl_err, wallet_minimal_headers);
 }
 
 json_t *json_rpc_longpoll(CURL *curl, char *lp_url, struct pool_infos *pool, const char *req, int *curl_err)
@@ -655,7 +661,8 @@ json_t *json_rpc_longpoll(CURL *curl, char *lp_url, struct pool_infos *pool, con
         // on pool rotate by time-limit, this keepalive can be a problem
         bool keepalive = pool->time_limit == 0 || pool->time_limit > opt_timeout;
 
-        return json_rpc_call(curl, lp_url, userpass, req, false, true, keepalive, curl_err);
+        return json_rpc_call(curl, lp_url, userpass, req, false, true, keepalive, false, curl_err,
+                false);
 }
 
 json_t *json_load_url(char* cfg_url, json_error_t *err)

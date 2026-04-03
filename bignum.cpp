@@ -7,7 +7,8 @@
 #include "uint256.h"
 
 #include <openssl/opensslv.h>
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
+/* Windows VS often ships 1.0.x opensslv.h while linking OpenSSL 3 (no BN_init). */
+#if OPENSSL_VERSION_NUMBER < 0x10100000L && !defined(CCMINER_USE_OPENSSL11_BIGNUM)
 #include "compat/bignum_ssl10.hpp"
 #else
 #include "bignum.hpp"

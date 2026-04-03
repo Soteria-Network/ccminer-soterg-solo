@@ -832,6 +832,12 @@ struct work {
         /* MWEB support fields */
         uchar *mweb_data;    // MWEB data from getblocktemplate/stratum  
         size_t mweb_size;    // Size of MWEB data in bytes
+
+        /* Solo GBT: hex of (tx count varint || txs) after 80-byte header; used for submitblock */
+        char *gbt_txs_hex;
+        char *gbt_workid;
+        /* Solo GBT: max header ntime before refetching template (local ntime rolls stay below this). */
+        uint32_t gbt_ntime_cap;
 };
 
 #define POK_BOOL_MASK 0x00008000
@@ -898,7 +904,10 @@ bool parse_pool_array(json_t *obj);
 void pool_dump_infos(void);
 
 json_t * json_rpc_call_pool(CURL *curl, struct pool_infos*,
-        const char *req, bool lp_scan, bool lp, int *err);
+        const char *req, bool lp_scan, bool lp, int *err, bool allow_null_result,
+        bool wallet_minimal_headers);
+
+extern char *opt_coinbase_addr;
 json_t * json_rpc_longpoll(CURL *curl, char *lp_url, struct pool_infos*,
         const char *req, int *err);
 
