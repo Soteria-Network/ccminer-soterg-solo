@@ -12,7 +12,7 @@ This guide shows how to mine Soteria solo on a local node (Linux). It covers NVI
 - NVIDIA GPU with proprietary driver
 - CUDA Toolkit 13.0
 - ccminer-soterg-solo (Linux build requires GLIBC ≥ 2.38)
-- soteriad and soteria-cli executables
+- soteriad and soteria-cli binaries or executables depend on OS
 - Basic shell (bash, zsh, etc.)
 
 ---
