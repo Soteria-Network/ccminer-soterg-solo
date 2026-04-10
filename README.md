@@ -36,6 +36,7 @@ sudo apt-get -y install cuda-toolkit-13-0
 sudo apt-get install -y cuda-drivers
 ```
 Note: For better performance install the proprietary kernel module flavor not the open kernel module flavor from official Nvidia website
+
 Note: CUDA Toolkit 13.0 officially targets Debian 12 in the archive, but it was tested and works on Debian 13.
 
 ---
