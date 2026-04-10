@@ -67,7 +67,7 @@ If miner and node run on different machines, adjust rpcbind and rpcallowip in so
 ## soteria.conf (example)
 Replace placeholders (your_rpcuser, your_rpcpassword, your_wallet_address, 192.168.0.XX) with real values.
 ```
-addnode=178.72.89.199
+addnode=178.72.89.199:8323
 addnode=69.42.222.20:8323
 addnode=27.254.39.27:8323
 addnode=145.239.3.70:8323
