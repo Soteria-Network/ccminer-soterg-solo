@@ -8,7 +8,7 @@ This guide shows how to mine Soteria solo on a local node (Linux). It covers NVI
 ---
 
 ## Requirements
-- Debian 13 (instructions tested; CUDA package for Debian 12 works on Debian 13)
+- Debian 13 and any Linux OS with GLIBC ≥ 2.38 (instructions tested; CUDA package for Debian 12 works on Debian 13)
 - NVIDIA GPU with proprietary driver
 - CUDA Toolkit 13.0
 - ccminer-soterg-solo (Linux build requires GLIBC ≥ 2.38)
