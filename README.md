@@ -18,6 +18,9 @@ This guide shows how to mine Soteria solo on a local node (Linux). It covers NVI
 ---
 
 ## CUDA Toolkit 13.0 (installer used / tested)
+
+Note: CUDA Toolkit 13.0 for other Linux OS, follow the instructions on Nvidia website (https://developer.nvidia.com/cuda-13-0-0-download-archive?target_os=Linux&target_arch=x86_64).
+
 Official CUDA 13.0 download archive:
 https://developer.nvidia.com/cuda-13-0-0-download-archive?target_os=Linux&target_arch=x86_64&Distribution=Debian&target_version=12&target_type=deb_local
 
