@@ -117,6 +117,8 @@ Option A — Move binaries to /usr/local/bin (recommended)
 sudo cp /home/you/soteriad /usr/local/bin/
 sudo cp /home/you/soteria-cli /usr/local/bin/
 sudo chmod +x /usr/local/bin/soteriad /usr/local/bin/soteria-cli
+./soteriad -daemon
+./ccminer -a soterg -o http://127.0.0.1:8323 -u your_rpcuser -p your_rpcpassword --coinbase-addr=your_wallet_address
 ```
 
 Option B — Add directory to PATH (per-user)
@@ -127,12 +129,16 @@ export PATH="$PATH:/home/you/soteria"
 Then reload:
 ```
 source ~/.bashrc
+./soteriad -daemon
+./ccminer -a soterg -o http://127.0.0.1:8323 -u your_rpcuser -p your_rpcpassword --coinbase-addr=your_wallet_address
 ```
 
 Option C — Create symlinks in /usr/local/bin
 ```
 sudo ln -s /home/you/path/to/soteriad /usr/local/bin/soteriad
 sudo ln -s /home/you/path/to/soteria-cli /usr/local/bin/soteria-cli
+./soteriad -daemon
+./ccminer -a soterg -o http://127.0.0.1:8323 -u your_rpcuser -p your_rpcpassword --coinbase-addr=your_wallet_address
 ```
 
 Verify:
