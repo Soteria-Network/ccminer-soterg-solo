@@ -102,7 +102,7 @@ Notes:
 
 Method 1 — Run from same folder
 1. Put soteriad, soteria-cli, and ccminer-soterg-solo in one folder.
-2. In that folder:
+2. In that folder, cd to/path then run:
 ```
 ./soteriad -daemon
 ./ccminer -a soterg -o http://127.0.0.1:8323 -u your_rpcuser -p your_rpcpassword --coinbase-addr=your_wallet_address
