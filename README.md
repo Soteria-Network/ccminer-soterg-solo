@@ -1,4 +1,4 @@
-# Soteria — Solo Mining on a Local Node (Draft)
+# Soteria — Solo Mining on a Local Node
 
 > Hint: This is a draft version. We will add more details and instructions later.
 
