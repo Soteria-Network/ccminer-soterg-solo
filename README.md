@@ -102,7 +102,7 @@ Notes:
 
 Method 1 — Run from same folder
 1. Put soteriad, soteria-cli, and ccminer-soterg-solo in one folder.
-2. In that folder, cd to/path then run:
+2. In that folder, cd to/path then run: # Replace placeholder (to/path) with your actual path.
 ```
 ./soteriad -daemon
 ./ccminer -a soterg -o http://127.0.0.1:8323 -u your_rpcuser -p your_rpcpassword --coinbase-addr=your_wallet_address
@@ -114,8 +114,8 @@ Choose one option below.
 
 Option A — Move binaries to /usr/local/bin (recommended)
 ```
-sudo cp /home/you/soteriad /usr/local/bin/
-sudo cp /home/you/soteria-cli /usr/local/bin/
+sudo cp /home/you/soteriad /usr/local/bin/     # Replace placeholder (/home/you/soteriad) with your actual path
+sudo cp /home/you/soteria-cli /usr/local/bin/  # Replace placeholder (/home/you/soteria-cli) with your actual path
 sudo chmod +x /usr/local/bin/soteriad /usr/local/bin/soteria-cli
 ./soteriad -daemon
 ./ccminer -a soterg -o http://127.0.0.1:8323 -u your_rpcuser -p your_rpcpassword --coinbase-addr=your_wallet_address
@@ -124,7 +124,7 @@ sudo chmod +x /usr/local/bin/soteriad /usr/local/bin/soteria-cli
 Option B — Add directory to PATH (per-user)
 Edit your shell profile (~/.bashrc, ~/.profile, or ~/.zshrc) and add:
 ```
-export PATH="$PATH:/home/you/soteria"
+export PATH="$PATH:/home/you/soteria"  # Replace placeholder (/home/you/soteria) with your actual path
 ```
 Then reload:
 ```
@@ -135,8 +135,8 @@ source ~/.bashrc
 
 Option C — Create symlinks in /usr/local/bin
 ```
-sudo ln -s /home/you/path/to/soteriad /usr/local/bin/soteriad
-sudo ln -s /home/you/path/to/soteria-cli /usr/local/bin/soteria-cli
+sudo ln -s /home/you/path/to/soteriad /usr/local/bin/soteriad        # Replace placeholder (/home/you/path/to/soteriad) with your actual path
+sudo ln -s /home/you/path/to/soteria-cli /usr/local/bin/soteria-cli  # Replace placeholder (/home/you/path/to/soteria-cli) with your actual path
 ./soteriad -daemon
 ./ccminer -a soterg -o http://127.0.0.1:8323 -u your_rpcuser -p your_rpcpassword --coinbase-addr=your_wallet_address
 ```
@@ -170,8 +170,8 @@ After=network.target
 User=your_user
 Group=your_user
 Type=forking
-ExecStart=/usr/local/bin/soteriad -daemon -datadir=/home/your_user/.soteria
-ExecStop=/usr/local/bin/soteria-cli -datadir=/home/your_user/.soteria stop
+ExecStart=/usr/local/bin/soteriad -daemon -datadir=/home/your_user/.soteria  # Replace placeholder (/home/your_user/.soteria) with your actual path
+ExecStop=/usr/local/bin/soteria-cli -datadir=/home/your_user/.soteria stop   # Replace placeholder (/home/your_user/.soteria) with your actual path
 Restart=on-failure
 TimeoutStopSec=30
 
